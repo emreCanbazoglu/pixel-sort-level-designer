@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Tool caches / outputs
+.psld_cache/
+out/
+
+# Local generated example outputs in repo root (keep real level assets elsewhere)
+cat*.json
+level*.json
+*_openai.json
+*_agent.json
+*.png
+

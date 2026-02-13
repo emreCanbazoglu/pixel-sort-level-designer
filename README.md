@@ -1,0 +1,237 @@
+# Conveyor Merge Puzzle — Game Rules & System Specification
+
+## Overview
+
+This is a deterministic spatial puzzle game where players merge colored blocks to create "shooters" that travel along a conveyor and fill matching slots from the outer layer toward the center of an image.
+
+Each level is a structured puzzle with a guaranteed solution.
+
+There is no randomness during gameplay.
+
+Success depends entirely on player decisions.
+
+---
+
+# Core Board Structure
+
+Each level contains two synchronized layers:
+
+## Top Layer
+
+- A pixel-art style image composed of colored blocks.
+- Blocks are grouped by color.
+- Adjacent blocks of the same color can be merged.
+
+## Bottom Layer
+
+- Contains colored slots aligned with the top layer.
+- A slot can only be cleared by a block of the same color.
+- When a slot is filled:
+  - The slot disappears.
+  - The corresponding top block disappears.
+
+The board clears from **outer → inner layers**.
+
+---
+
+# Conveyor System
+
+A conveyor loop surrounds the board.
+
+### Purpose:
+
+Acts as both:
+
+- a transport system for shooters
+- a bounded failure buffer
+
+### Capacity:
+
+Maximum Shooters on conveyor: 5
+
+If all 5 shooters are unable to fire, the game ends.
+
+---
+
+# Shooter Creation
+
+When the player taps a block:
+
+1. All connected adjacent blocks of the same color merge.
+2. The merged group becomes a **Shooter**.
+3. Shooter ammo equals the number of merged blocks.
+
+Example:
+Merged blocks: 7
+Shooter ammo: 7 shots
+
+---
+
+# Shooter Behavior
+
+Shooters continuously loop around the conveyor until their ammo reaches zero.
+
+Shooters automatically fire when a valid slot is reachable.
+
+## There is no firing randomness.
+
+# Firing Rules
+
+A shooter may fire only if:
+
+✅ A slot of matching color exists  
+✅ The slot is reachable from that conveyor side  
+✅ No other slot blocks the path
+
+---
+
+## Lane Constraints
+
+### Left / Right Conveyor
+
+- Shooters target rows.
+- Only the nearest reachable slot in a row may be hit.
+- Cannot hit multiple slots in the same row during one pass.
+
+### Top / Bottom Conveyor
+
+- Shooters target columns.
+- Only the nearest reachable slot in a column may be hit.
+- Cannot hit multiple slots in the same column during one pass.
+
+---
+
+# Ammo Consumption
+
+Each successful shot:
+Shooter ammo -= 1
+
+When ammo reaches zero:
+
+👉 Shooter is removed from the conveyor.
+
+---
+
+# Block Removal
+
+When a slot is filled:
+
+- The slot disappears.
+- The top block disappears.
+- New inner slots may become reachable.
+
+This creates natural puzzle progression.
+
+---
+
+# Player Goal
+
+Clear the entire board by filling all slots.
+
+WIN CONDITION:
+All slots removed.
+
+---
+
+# Fail Condition
+
+The player loses if:
+Conveyor is full (5 shooters)
+AND
+No shooter can fire.
+This is a deterministic deadlock.
+
+No reshuffle occurs.
+
+---
+
+# Determinism Requirement
+
+Levels must always be solvable.
+
+There must exist at least one valid sequence of merges that clears the board.
+
+Random or unsolvable boards are not allowed.
+
+---
+
+# Design Principles
+
+## Skill-Based Gameplay
+
+- No timers
+- No randomness
+- Fully predictable outcomes
+
+## Strategic Depth Comes From:
+
+- Merge size decisions
+- Lane management
+- Unlock ordering
+- Conveyor risk control
+
+---
+
+# Level Design Constraints
+
+To ensure solvability:
+
+### REQUIRED
+
+- Every inner slot must become reachable after outer removal.
+- Ammo supply must exceed minimum slot requirements.
+- Conveyor deadlocks must be avoidable with correct play.
+
+### AVOID
+
+- Single-tile color noise
+- Diagonal-only adjacency
+- Excessive color fragmentation
+- Hidden unreachable slots
+
+---
+
+# Difficulty Levers
+
+Designers can control difficulty via:
+
+## Easier
+
+- Fewer colors
+- Large merge clusters
+- Clear outer rings
+- High ammo surplus
+
+## Harder
+
+- Tight ammo budgets
+- Lane blockers
+- Asymmetric access
+- Forced merge ordering
+- Near-deadlock states
+
+Target mistake tolerance:
+Allow 2–3 player mistakes before failure becomes inevitable.
+
+---
+
+# Solver Requirement (CRITICAL)
+
+All generated levels MUST pass a deterministic solver before shipping.
+
+The solver must confirm:
+Backward generation is strongly recommended to guarantee reachability.
+
+---
+
+# System Philosophy
+
+AI should assist with:
+
+- candidate generation
+- difficulty scoring
+- pattern discovery
+
+AI must NOT be the final authority on solvability.
+
+The solver is the source of truth.

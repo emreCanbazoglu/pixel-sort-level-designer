@@ -1,0 +1,25 @@
+[project]
+name = "pixel-sort-level-designer"
+version = "0.1.0"
+description = "Deterministic level generation utilities for the Conveyor Merge Puzzle."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "Proprietary" }
+
+dependencies = []
+
+[project.optional-dependencies]
+image = [
+  # Used for image -> grid conversion. Not required for text -> grid.
+  "Pillow>=10.0.0",
+]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[project.scripts]
+psld = "psld.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["psld/tests"]
+
