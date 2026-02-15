@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from collections import Counter, deque
 
+from .coloring import DEFAULT_PALETTE, colorize_mask
+from .component_split import split_large_components
+from .palette_map import (
+    hex_to_rgb,
+    luma_709,
+    map_rgb_to_palette_luma_bucket,
+    map_rgb_to_palette_nearest,
+    normalize_hex_palette,
+)
+
 
 def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
     r, g, b = rgb
@@ -91,6 +101,15 @@ def image_to_grid(
     min_component_size: int = 2,
     background_hex: str = "#000000",
     fill_background: bool = False,
+    recolor_mode: str = "source",  # "source" | "palette_map" | "silhouette"
+    recolor_palette: list[str] | None = None,
+    recolor_color_mode: str = "vertical_stripes",
+    palette_map_mode: str = "nearest",  # "nearest" | "luma_buckets"
+    split_max_component: int | None = None,
+    split_mode: str = "sectors",
+    split_cut_thickness: int = 1,
+    mask_mode: str = "alpha",  # "alpha" or "auto"
+    bg_tol: int = 32,
 ) -> tuple[list[str], list[list[int | None]]]:
     """
     Converts an input image to:
@@ -109,17 +128,126 @@ def image_to_grid(
     # Downsample to the target grid deterministically (BOX = area average).
     small = img.resize((w, h), resample=Image.Resampling.BOX)
 
-    # Create a working RGB image for quantization, with transparent pixels painted black.
     rgba = list(small.getdata())
-    occ = []
-    rgb = []
-    for (r, g, b, a) in rgba:
-        is_occ = a >= alpha_threshold
-        occ.append(is_occ)
-        rgb.append((r, g, b) if is_occ else (0, 0, 0))
+    has_alpha = any(a < 255 for (_, _, _, a) in rgba)
+    bg_rgb: tuple[int, int, int] | None = None
+    if mask_mode == "auto" and not has_alpha:
+        corners = [rgba[0], rgba[w - 1], rgba[(h - 1) * w], rgba[h * w - 1]]
+        br = sorted(p[0] for p in corners)[len(corners) // 2]
+        bg = sorted(p[1] for p in corners)[len(corners) // 2]
+        bb = sorted(p[2] for p in corners)[len(corners) // 2]
+        bg_rgb = (br, bg, bb)
 
+    def is_occupied(r: int, g: int, b: int, a: int) -> bool:
+        if mask_mode == "alpha":
+            return a >= alpha_threshold
+        if mask_mode == "auto":
+            if has_alpha:
+                return a >= alpha_threshold
+            # Background color from corners; treat similar pixels as empty.
+            if bg_rgb is None:
+                return True
+            br, bg, bb = bg_rgb
+            # Use max-channel diff; simple, deterministic.
+            d = max(abs(r - br), abs(g - bg), abs(b - bb))
+            return d > bg_tol
+        raise ValueError(f"Unknown mask_mode: {mask_mode}")
+
+    occ: list[bool] = []
+    rgb: list[tuple[int, int, int]] = []
+    for (r, g, b, a) in rgba:
+        o = is_occupied(r, g, b, a)
+        occ.append(o)
+        rgb.append((r, g, b))
+
+    if recolor_mode == "palette_map":
+        if recolor_palette is None:
+            raise ValueError("recolor_palette is required when recolor_mode='palette_map'")
+        palette_hex = normalize_hex_palette(recolor_palette)
+        palette_rgb = [hex_to_rgb(hx) for hx in palette_hex]
+
+        min_l = 0.0
+        max_l = 0.0
+        palette_by_luma: list[int] = list(range(len(palette_rgb)))
+        if palette_map_mode == "luma_buckets":
+            ls = [luma_709(c) for c in palette_rgb]
+            palette_by_luma = [i for (i, _) in sorted(enumerate(ls), key=lambda t: (t[1], t[0]))]
+            pix_ls = [luma_709(rgb[i]) for i, is_occ in enumerate(occ) if is_occ]
+            min_l = min(pix_ls) if pix_ls else 0.0
+            max_l = max(pix_ls) if pix_ls else 0.0
+        elif palette_map_mode == "nearest":
+            pass
+        else:
+            raise ValueError(f"Unknown palette_map_mode: {palette_map_mode}")
+
+        cells: list[list[int | None]] = [[None for _ in range(w)] for _ in range(h)]
+        for y in range(h):
+            for x in range(w):
+                i = y * w + x
+                if not occ[i]:
+                    cells[y][x] = None
+                    continue
+                if palette_map_mode == "nearest":
+                    cells[y][x] = map_rgb_to_palette_nearest(rgb[i], palette_rgb)
+                else:
+                    cells[y][x] = map_rgb_to_palette_luma_bucket(
+                        rgb[i],
+                        palette_rgb=palette_rgb,
+                        palette_by_luma=palette_by_luma,
+                        min_l=min_l,
+                        max_l=max_l,
+                    )
+
+        _denoise_small_components(cells, min_component_size=min_component_size)
+        if split_max_component is not None:
+            split_large_components(
+                cells,
+                palette_size=len(palette_hex),
+                max_component_size=split_max_component,
+                mode=split_mode,
+                cut_thickness=split_cut_thickness,
+            )
+            _denoise_small_components(cells, min_component_size=min_component_size)
+        if fill_background:
+            for y in range(h):
+                for x in range(w):
+                    if cells[y][x] is None:
+                        cells[y][x] = 0
+        return palette_hex, cells
+
+    # If requested, ignore source colors and deterministically distribute a palette over the silhouette.
+    if recolor_mode == "silhouette":
+        mask = [[occ[y * w + x] for x in range(w)] for y in range(h)]
+        pal = recolor_palette
+        if pal is None:
+            pal = DEFAULT_PALETTE[: max(1, min(colors, len(DEFAULT_PALETTE)))]
+        palette_hex, grid = colorize_mask(mask, mode=recolor_color_mode, palette=pal)
+        cells = grid.cells
+        _denoise_small_components(cells, min_component_size=min_component_size)
+        if split_max_component is not None:
+            split_large_components(
+                cells,
+                palette_size=len(palette_hex),
+                max_component_size=split_max_component,
+                mode=split_mode,
+                cut_thickness=split_cut_thickness,
+            )
+            _denoise_small_components(cells, min_component_size=min_component_size)
+
+        if fill_background:
+            # Fill empty as palette index 0.
+            for y in range(h):
+                for x in range(w):
+                    if cells[y][x] is None:
+                        cells[y][x] = 0
+        return palette_hex, cells
+    if recolor_mode != "source":
+        raise ValueError(f"Unknown recolor_mode: {recolor_mode}")
+
+    # Create a working RGB image for quantization, with transparent pixels painted black.
+    rgb_for_quant = [(r, g, b) if occ_i else (0, 0, 0) for (occ_i, (r, g, b)) in zip(occ, rgb)]
     rgb_img = Image.new("RGB", (w, h))
-    rgb_img.putdata(rgb)
+    rgb_img.putdata(rgb_for_quant)
 
     # Deterministic palette quantization.
     pal_img = rgb_img.quantize(colors=colors, method=Image.Quantize.MEDIANCUT, kmeans=0)
@@ -146,6 +274,15 @@ def image_to_grid(
                 cells[y][x] = remap[idxs[i]]
 
     _denoise_small_components(cells, min_component_size=min_component_size)
+    if split_max_component is not None:
+        split_large_components(
+            cells,
+            palette_size=len(palette_hex),
+            max_component_size=split_max_component,
+            mode=split_mode,
+            cut_thickness=split_cut_thickness,
+        )
+        _denoise_small_components(cells, min_component_size=min_component_size)
 
     if fill_background:
         # Ensure there are no "empty" cells: transparency becomes a background color cell.

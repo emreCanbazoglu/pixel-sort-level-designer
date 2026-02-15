@@ -1,8 +1,67 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from .models import Pos
+
+
+def _depth_fn(mask: list[list[bool]]):
+    """
+    Depth = Manhattan distance to the nearest empty cell or boundary in the four
+    cardinal directions (higher = more interior).
+    """
+    h = len(mask)
+    w = len(mask[0]) if h else 0
+    cache: dict[tuple[int, int], int] = {}
+
+    def depth(x: int, y: int) -> int:
+        key = (x, y)
+        if key in cache:
+            return cache[key]
+        if not mask[y][x]:
+            cache[key] = 0
+            return 0
+
+        best = 10**9
+        # left
+        d = 0
+        xx = x
+        while True:
+            xx -= 1
+            d += 1
+            if xx < 0 or not mask[y][xx]:
+                best = min(best, d)
+                break
+        # right
+        d = 0
+        xx = x
+        while True:
+            xx += 1
+            d += 1
+            if xx >= w or not mask[y][xx]:
+                best = min(best, d)
+                break
+        # up
+        d = 0
+        yy = y
+        while True:
+            yy -= 1
+            d += 1
+            if yy < 0 or not mask[yy][x]:
+                best = min(best, d)
+                break
+        # down
+        d = 0
+        yy = y
+        while True:
+            yy += 1
+            d += 1
+            if yy >= h or not mask[yy][x]:
+                best = min(best, d)
+                break
+
+        cache[key] = best
+        return best
+
+    return depth
 
 
 def _row_extrema(present: set[tuple[int, int]], y: int) -> tuple[int, int] | None:
@@ -50,16 +109,10 @@ def is_exposed(mask: list[list[bool]], present: set[tuple[int, int]], p: Pos) ->
 
 def generate_backward_place_order(mask: list[list[bool]]) -> list[Pos]:
     """
-    Deterministic backward slot generator.
+    Deterministic backward slot order for lane reachability.
 
-    Starts from an empty solved board (no slots present) and *adds* slots
-    (inner -> outer) such that each newly-added slot is lane-reachable
-    at placement time (i.e., exposed) when considered with the already-placed slots.
-
-    The forward playable clearing order is simply the reverse of this list.
-
-    If generation fails, the mask cannot be assigned a strict outer->inner reachable
-    order under the lane reachability rules.
+    We compute a deterministic forward removal order by repeatedly removing an
+    exposed slot (outer -> inner). The backward placement order is the reverse.
     """
     h = len(mask)
     if h == 0:
@@ -68,90 +121,59 @@ def generate_backward_place_order(mask: list[list[bool]]) -> list[Pos]:
     if any(len(r) != w for r in mask):
         raise ValueError("mask must be rectangular")
 
-    remaining: set[tuple[int, int]] = {(x, y) for y in range(h) for x in range(w) if mask[y][x]}
-    present: set[tuple[int, int]] = set()
+    present: set[tuple[int, int]] = {(x, y) for y in range(h) for x in range(w) if mask[y][x]}
+    if not present:
+        return []
 
-    order: list[Pos] = []
+    depth = _depth_fn(mask)
 
-    # Deterministic tie-break: choose the candidate with the largest "depth" (more interior)
-    # computed against the original mask, then lowest (y, x).
-    depth_cache: dict[tuple[int, int], int] = {}
+    forward: list[Pos] = []
+    while present:
+        row_min: list[int | None] = [None for _ in range(h)]
+        row_max: list[int | None] = [None for _ in range(h)]
+        col_min: list[int | None] = [None for _ in range(w)]
+        col_max: list[int | None] = [None for _ in range(w)]
 
-    def depth(x: int, y: int) -> int:
-        # Manhattan distance to the nearest empty cell or boundary in 4-neighborhood directions.
-        # Higher = more interior. Purely a tie-breaker; correctness comes from exposure checks.
-        key = (x, y)
-        if key in depth_cache:
-            return depth_cache[key]
+        # Compute extrema for the current present set.
+        for (x, y) in present:
+            mn = row_min[y]
+            mx = row_max[y]
+            row_min[y] = x if mn is None else min(mn, x)
+            row_max[y] = x if mx is None else max(mx, x)
 
-        if not mask[y][x]:
-            depth_cache[key] = 0
-            return 0
+            mn = col_min[x]
+            mx = col_max[x]
+            col_min[x] = y if mn is None else min(mn, y)
+            col_max[x] = y if mx is None else max(mx, y)
 
-        best = 10**9
-        # left
-        d = 0
-        xx = x
-        while True:
-            xx -= 1
-            d += 1
-            if xx < 0 or not mask[y][xx]:
-                best = min(best, d)
-                break
-        # right
-        d = 0
-        xx = x
-        while True:
-            xx += 1
-            d += 1
-            if xx >= w or not mask[y][xx]:
-                best = min(best, d)
-                break
-        # up
-        d = 0
-        yy = y
-        while True:
-            yy -= 1
-            d += 1
-            if yy < 0 or not mask[yy][x]:
-                best = min(best, d)
-                break
-        # down
-        d = 0
-        yy = y
-        while True:
-            yy += 1
-            d += 1
-            if yy >= h or not mask[yy][x]:
-                best = min(best, d)
-                break
+        # Pick an exposed slot deterministically: outer-most first (lowest depth), then top-left.
+        best_xy: tuple[int, int] | None = None
+        best_key: tuple[int, int, int] | None = None
+        for (x, y) in present:
+            if (
+                row_min[y] == x
+                or row_max[y] == x
+                or col_min[x] == y
+                or col_max[x] == y
+            ):
+                key = (int(depth(x, y)), y, x)
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_xy = (x, y)
 
-        depth_cache[key] = best
-        return best
+        if best_xy is None:
+            # This should be impossible (any non-empty set has a row/col extremum),
+            # but keep a hard error in case of a future bug.
+            raise ValueError("Internal error: no exposed slot found for non-empty present set")
 
-    while remaining:
-        candidates: list[tuple[int, int]] = []
-        # A slot is valid to add now if it would be exposed after being added.
-        for (x, y) in remaining:
-            tmp_present = present | {(x, y)}
-            if is_exposed(mask, tmp_present, Pos(x=x, y=y)):
-                candidates.append((x, y))
+        x, y = best_xy
+        forward.append(Pos(x=x, y=y))
+        present.remove((x, y))
 
-        if not candidates:
-            # Provide a small debug hint.
-            raise ValueError(
-                "No reachable slot placement found; mask likely violates lane-reachability layering"
-            )
-
-        # Choose deterministically: prefer more interior, then top-left.
-        candidates.sort(key=lambda xy: (-depth(xy[0], xy[1]), xy[1], xy[0]))
-        x, y = candidates[0]
-
-        present.add((x, y))
-        remaining.remove((x, y))
-        order.append(Pos(x=x, y=y))
-
-    return order
+    # Backward (placement) order is reverse of forward removal.
+    backward = list(reversed(forward))
+    verify_forward_remove_order(mask, forward)
+    return backward
 
 
 def verify_forward_remove_order(mask: list[list[bool]], forward_order: list[Pos]) -> None:
@@ -173,4 +195,3 @@ def verify_forward_remove_order(mask: list[list[bool]], forward_order: list[Pos]
 
     if present:
         raise ValueError("Forward order ended early; slots remain present")
-

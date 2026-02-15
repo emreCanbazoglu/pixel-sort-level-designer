@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Prefer the active venv if present, otherwise prefer repo-local .venv, otherwise Homebrew Python.
+# This keeps `./scripts/py ...` consistent with `pip install ...` workflows.
+if [[ -n "${VIRTUAL_ENV:-}" ]] && command -v python >/dev/null 2>&1; then
+  PY="$(command -v python)"
+elif [[ -x ".venv/bin/python" ]]; then
+  PY=".venv/bin/python"
+elif [[ -x "/opt/homebrew/bin/python3" ]]; then
+  PY="/opt/homebrew/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
+  PY="$(command -v python3)"
+else
+  echo "error: python3 not found. Install Python >= 3.11 (Homebrew recommended on macOS)." >&2
+  exit 127
+fi
+
+if ! "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  "$PY" --version >&2 || true
+  echo "error: Python >= 3.11 required. On macOS: brew install python" >&2
+  exit 2
+fi
+
+exec "$PY" "$@"

@@ -9,8 +9,7 @@ from .backward_slots import generate_backward_place_order, verify_forward_remove
 from .coloring import colorize_mask
 from .llm_openai import OpenAIConfig, generate_mask_candidates_via_openai
 from .mask_ops import mask_from_strings, remove_small_foreground_components
-from .models import Level, Grid
-from .slots_from_top import derive_slots_from_top
+from .models import Level
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,8 +147,7 @@ def generate_level_from_prompt(req: AgentRequest):
         mask = best
 
         palette, top = colorize_mask(mask, palette_size=req.colors, mode=req.color_mode)
-        slots_derived = derive_slots_from_top(top.cells, mode="derangement", rotate_shift=None)
-        slots = Grid(w=top.w, h=top.h, cells=slots_derived.cells)
+        slots = top
 
         backward = generate_backward_place_order(mask)
         forward = list(reversed(backward))
@@ -171,10 +169,6 @@ def generate_level_from_prompt(req: AgentRequest):
                 "picked_candidate_index": best_idx,
                 "picked_candidate_notes": best_notes,
                 "picked_candidate_score": best_s,
-                "slots_mode": slots_derived.mode,
-                "slots_rotate_shift": slots_derived.shift,
-                "slots_same_cell_count": slots_derived.same_cell_count,
-                "slots_occupied_cells": slots_derived.occupied_cells,
             },
         )
 

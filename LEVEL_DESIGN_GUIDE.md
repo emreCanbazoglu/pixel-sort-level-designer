@@ -245,3 +245,11 @@ Favor clarity over verbosity.
 Avoid theoretical discussion.
 
 Design this like it will ship.
+
+---
+
+## Repo Status (2026-02-15)
+
+This file is the target spec. For current implementation status and remaining tasks, see:
+
+- `IMPLEMENTATION_GUIDE.md`

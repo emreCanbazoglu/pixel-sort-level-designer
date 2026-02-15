@@ -12,29 +12,11 @@ DEFAULT_PALETTE = [
 ]
 
 
-def _normalize_palette(palette: list[str]) -> list[str]:
-    out: list[str] = []
-    for hx in palette:
-        s = hx.strip()
-        if not s:
-            continue
-        if not s.startswith("#"):
-            s = "#" + s
-        s = s.upper()
-        if len(s) != 7 or any(ch not in "0123456789ABCDEF#" for ch in s):
-            raise ValueError(f"Invalid hex color: {hx!r} (expected '#RRGGBB')")
-        out.append(s)
-    if not out:
-        raise ValueError("palette must contain at least one color")
-    return out
-
-
 def colorize_mask(
     mask: list[list[bool]],
     *,
     palette_size: int = 4,
     mode: str = "solid",
-    palette: list[str] | None = None,
 ) -> tuple[list[str], Grid]:
     """
     Assigns palette indices to occupied cells in a deterministic way.
@@ -46,14 +28,11 @@ def colorize_mask(
     w = len(mask[0]) if h else 0
     if any(len(r) != w for r in mask):
         raise ValueError("mask must be rectangular")
+    if palette_size <= 0:
+        raise ValueError("palette_size must be positive")
 
-    if palette is not None:
-        pal = _normalize_palette(palette)
-    else:
-        if palette_size <= 0:
-            raise ValueError("palette_size must be positive")
-        pal = DEFAULT_PALETTE[: max(1, min(palette_size, len(DEFAULT_PALETTE)))]
-    k = len(pal)
+    palette = DEFAULT_PALETTE[: max(1, min(palette_size, len(DEFAULT_PALETTE)))]
+    k = len(palette)
 
     cells: list[list[int | None]] = [[None for _ in range(w)] for _ in range(h)]
 
@@ -81,34 +60,10 @@ def colorize_mask(
                     idx = (top * 2 + left) % k
                     cells[y][x] = idx
 
-    elif mode == "radial_bands":
-        # Assign colors by distance from the foreground centroid. Deterministic, tends to
-        # create layered "bands" inside a silhouette.
-        pts = [(x, y) for y in range(h) for x in range(w) if mask[y][x]]
-        if not pts:
-            return (pal, Grid(w=w, h=h, cells=cells))
-        cx = sum(p[0] for p in pts) / len(pts)
-        cy = sum(p[1] for p in pts) / len(pts)
-        ds = [abs(x - cx) + abs(y - cy) for (x, y) in pts]
-        maxd = max(ds) if ds else 0.0
-        for y in range(h):
-            for x in range(w):
-                if not mask[y][x]:
-                    continue
-                d = abs(x - cx) + abs(y - cy)
-                if maxd <= 0:
-                    idx = 0
-                else:
-                    # Map to [0, k-1]
-                    idx = int((d / (maxd + 1e-9)) * k)
-                    if idx >= k:
-                        idx = k - 1
-                cells[y][x] = idx
-
     else:
         raise ValueError(f"Unknown color mode: {mode}")
 
-    return (pal, Grid(w=w, h=h, cells=cells))
+    return (palette, Grid(w=w, h=h, cells=cells))
 
 
 def colorize_mask_filled(
@@ -117,7 +72,6 @@ def colorize_mask_filled(
     palette_size: int = 4,
     mode: str = "vertical_stripes",
     background_index: int = 0,
-    palette: list[str] | None = None,
 ) -> tuple[list[str], Grid]:
     """
     Like colorize_mask(), but guarantees there are no empty cells:
@@ -130,14 +84,11 @@ def colorize_mask_filled(
     w = len(mask[0]) if h else 0
     if any(len(r) != w for r in mask):
         raise ValueError("mask must be rectangular")
+    if palette_size <= 0:
+        raise ValueError("palette_size must be positive")
 
-    if palette is not None:
-        pal = _normalize_palette(palette)
-    else:
-        if palette_size <= 0:
-            raise ValueError("palette_size must be positive")
-        pal = DEFAULT_PALETTE[: max(1, min(palette_size, len(DEFAULT_PALETTE)))]
-    k = len(pal)
+    palette = DEFAULT_PALETTE[: max(1, min(palette_size, len(DEFAULT_PALETTE)))]
+    k = len(palette)
     if not (0 <= background_index < k):
         raise ValueError("background_index out of range for palette")
 
@@ -170,28 +121,7 @@ def colorize_mask_filled(
                     left = 0 if x < w // 2 else 1
                     cells[y][x] = fg[(top * 2 + left) % len(fg)]
 
-    elif mode == "radial_bands":
-        pts = [(x, y) for y in range(h) for x in range(w) if mask[y][x]]
-        if pts and fg:
-            cx = sum(p[0] for p in pts) / len(pts)
-            cy = sum(p[1] for p in pts) / len(pts)
-            ds = [abs(x - cx) + abs(y - cy) for (x, y) in pts]
-            maxd = max(ds) if ds else 0.0
-            for y in range(h):
-                for x in range(w):
-                    if not mask[y][x]:
-                        continue
-                    d = abs(x - cx) + abs(y - cy)
-                    if maxd <= 0:
-                        idx = fg[0]
-                    else:
-                        j = int((d / (maxd + 1e-9)) * len(fg))
-                        if j >= len(fg):
-                            j = len(fg) - 1
-                        idx = fg[j]
-                    cells[y][x] = idx
-
     else:
         raise ValueError(f"Unknown color mode: {mode}")
 
-    return (pal, Grid(w=w, h=h, cells=cells))
+    return (palette, Grid(w=w, h=h, cells=cells))

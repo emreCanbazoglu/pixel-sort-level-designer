@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 
 from .level_from_image import level_from_image
@@ -11,24 +10,7 @@ from .level_from_text import level_from_text
 from .level_from_word import level_from_word
 from .preview import preview_level_json
 from .region_stats import validate_grid_regions
-from .render_png import level_json_to_composite_png, level_json_to_png
-from .sim import GameConfig
-from .solver import solve_level
-
-
-def _parse_palette_csv(s: str) -> list[str]:
-    # CSV of hex colors: "#RRGGBB,#RRGGBB,..."
-    parts = [p.strip() for p in s.split(",")]
-    out: list[str] = []
-    for p in parts:
-        if not p:
-            continue
-        if not p.startswith("#"):
-            p = "#" + p
-        out.append(p)
-    if not out:
-        raise argparse.ArgumentTypeError("palette is empty")
-    return out
+from .render_png import level_json_to_png
 
 
 def _cmd_from_text(argv: list[str]) -> int:
@@ -41,7 +23,7 @@ def _cmd_from_text(argv: list[str]) -> int:
         "--color-mode",
         type=str,
         default="vertical_stripes",
-        choices=["solid", "vertical_stripes", "quadrants", "radial_bands"],
+        choices=["solid", "vertical_stripes", "quadrants"],
     )
     ap.add_argument("--padding", type=int, default=1)
     ap.add_argument("--fill-background", action="store_true", help="Fill empty cells with a background color index")
@@ -65,9 +47,6 @@ def _cmd_from_text(argv: list[str]) -> int:
     if ns.out == "-":
         sys.stdout.write(data + "\n")
     else:
-        out_dir = os.path.dirname(ns.out)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
         with open(ns.out, "w", encoding="utf-8") as f:
             f.write(data + "\n")
     return 0
@@ -83,7 +62,7 @@ def _cmd_from_word(argv: list[str]) -> int:
         "--color-mode",
         type=str,
         default="vertical_stripes",
-        choices=["solid", "vertical_stripes", "quadrants", "radial_bands"],
+        choices=["solid", "vertical_stripes", "quadrants"],
     )
     ap.add_argument("--padding", type=int, default=1)
     ap.add_argument("--fill-background", action="store_true", help="Fill empty cells with a background color index")
@@ -107,9 +86,6 @@ def _cmd_from_word(argv: list[str]) -> int:
     if ns.out == "-":
         sys.stdout.write(data + "\n")
     else:
-        out_dir = os.path.dirname(ns.out)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
         with open(ns.out, "w", encoding="utf-8") as f:
             f.write(data + "\n")
     return 0
@@ -126,72 +102,11 @@ def _cmd_from_image(argv: list[str]) -> int:
     ap.add_argument("--fill-background", action="store_true", help="Fill transparent pixels with --background")
     ap.add_argument("--background", type=str, default="#000000", help="Background color when --fill-background")
     ap.add_argument(
-        "--recolor-mode",
-        type=str,
-        default="source",
-        choices=["source", "palette_map", "silhouette"],
-        help="Coloring: 'source' keeps image colors (quantized). 'palette_map' maps pixels into a provided palette. 'silhouette' ignores source colors and paints the mask.",
-    )
-    ap.add_argument(
-        "--palette",
-        type=_parse_palette_csv,
-        default=None,
-        help="Comma-separated palette hex colors. Implies --recolor-mode palette_map unless explicitly set.",
-    )
-    ap.add_argument(
-        "--recolor-color-mode",
-        type=str,
-        default="vertical_stripes",
-        choices=["solid", "vertical_stripes", "quadrants", "radial_bands"],
-        help="When --recolor-mode silhouette: how to distribute palette colors across the silhouette.",
-    )
-    ap.add_argument(
-        "--palette-map-mode",
-        type=str,
-        default="nearest",
-        choices=["nearest", "luma_buckets"],
-        help="When --recolor-mode palette_map: map pixels by nearest RGB, or by luminance buckets (useful for grayscale).",
-    )
-    ap.add_argument(
-        "--split-max-component",
-        type=int,
-        default=None,
-        help="Deterministic post-process: split connected components larger than N by recoloring (helps avoid giant merges).",
-    )
-    ap.add_argument(
-        "--split-mode",
-        type=str,
-        default="sectors",
-        choices=["sectors", "stripes_x", "stripes_y", "cuts"],
-        help="When --split-max-component: how to split oversized components.",
-    )
-    ap.add_argument(
-        "--split-cut-thickness",
-        type=int,
-        default=2,
-        help="When --split-mode cuts: thickness of the inserted seam in cells (>=2 recommended so denoise doesn't erase it).",
-    )
-    ap.add_argument(
-        "--mask-mode",
-        type=str,
-        default="alpha",
-        choices=["alpha", "auto"],
-        help="How to decide empty vs occupied. 'alpha' uses transparency. 'auto' uses alpha if present else infers background from corners.",
-    )
-    ap.add_argument("--bg-tol", type=int, default=32, help="When --mask-mode auto: background tolerance (0-255)")
-    ap.add_argument(
         "--no-validate",
         action="store_true",
         help="Disable deterministic region/fragmentation validation gating",
     )
     ap.add_argument("--min-largest-region", type=int, default=6, help="Validation: per-color largest region >= N")
-    ap.add_argument("--max-largest-region", type=int, default=None, help="Validation: per-color largest region <= N")
-    ap.add_argument(
-        "--max-color-share",
-        type=float,
-        default=None,
-        help="Validation: per-color share of occupied cells <= F (0-1)",
-    )
     ap.add_argument("--max-total-regions", type=int, default=None, help="Validation: total regions <= N")
     ap.add_argument(
         "--max-fragmentation",
@@ -216,10 +131,6 @@ def _cmd_from_image(argv: list[str]) -> int:
     if ns.out == "-":
         raise SystemExit("psld from-image requires --out to be a file path (PNG preview is mandatory)")
 
-    recolor_mode = ns.recolor_mode
-    if ns.palette is not None and recolor_mode == "source":
-        recolor_mode = "palette_map"
-
     lvl = level_from_image(
         ns.path,
         w=ns.w,
@@ -229,22 +140,10 @@ def _cmd_from_image(argv: list[str]) -> int:
         min_component_size=ns.min_component_size,
         background_hex=ns.background,
         fill_background=ns.fill_background,
-        recolor_mode=recolor_mode,
-        recolor_palette=ns.palette,
-        recolor_color_mode=ns.recolor_color_mode,
-        palette_map_mode=ns.palette_map_mode,
-        split_max_component=ns.split_max_component,
-        split_mode=ns.split_mode,
-        split_cut_thickness=ns.split_cut_thickness,
-        mask_mode=ns.mask_mode,
-        bg_tol=ns.bg_tol,
     )
     payload = lvl.to_json_dict()
 
     data = json.dumps(payload, indent=2, sort_keys=True)
-    out_dir = os.path.dirname(ns.out)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
     with open(ns.out, "w", encoding="utf-8") as f:
         f.write(data + "\n")
 
@@ -265,8 +164,6 @@ def _cmd_from_image(argv: list[str]) -> int:
         res = validate_grid_regions(
             lvl.slots.cells,
             min_largest_region=ns.min_largest_region,
-            max_largest_region=ns.max_largest_region,
-            max_color_share=ns.max_color_share,
             max_total_regions=ns.max_total_regions,
             max_fragmentation=ns.max_fragmentation,
             min_occupied_cells=ns.min_occupied_cells,
@@ -296,7 +193,7 @@ def _cmd_from_prompt(argv: list[str]) -> int:
         "--color-mode",
         type=str,
         default="vertical_stripes",
-        choices=["solid", "vertical_stripes", "quadrants", "radial_bands"],
+        choices=["solid", "vertical_stripes", "quadrants"],
     )
     ap.add_argument("--padding", type=int, default=1)
     ap.add_argument("--out", type=str, default="-", help="Output path or '-' for stdout")
@@ -322,9 +219,6 @@ def _cmd_from_prompt(argv: list[str]) -> int:
     if ns.out == "-":
         sys.stdout.write(data + "\n")
     else:
-        out_dir = os.path.dirname(ns.out)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
         with open(ns.out, "w", encoding="utf-8") as f:
             f.write(data + "\n")
     return 0
@@ -359,35 +253,10 @@ def _cmd_export_png(argv: list[str]) -> int:
     return 0
 
 
-def _cmd_export_composite_png(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="psld export-composite-png")
-    ap.add_argument("level_json", type=str)
-    ap.add_argument("--scale", type=int, default=16)
-    ap.add_argument("--inset-scale", type=int, default=None)
-    ap.add_argument("--inset-alpha", type=int, default=255)
-    ap.add_argument("--no-grid", action="store_true")
-    ap.add_argument("--inset-outline", action="store_true", help="Draw an outline around the inset top cells")
-    ap.add_argument("--out", type=str, required=True, help="Output .png path")
-    ns = ap.parse_args(argv)
-
-    level_json_to_composite_png(
-        ns.level_json,
-        out_path=ns.out,
-        scale=ns.scale,
-        inset_scale=ns.inset_scale,
-        inset_alpha=ns.inset_alpha,
-        draw_grid=not ns.no_grid,
-        draw_inset_outline=ns.inset_outline,
-    )
-    return 0
-
-
 def _cmd_validate(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="psld validate")
     ap.add_argument("level_json", type=str, help="Path to a level .json")
     ap.add_argument("--min-largest-region", type=int, default=None)
-    ap.add_argument("--max-largest-region", type=int, default=None)
-    ap.add_argument("--max-color-share", type=float, default=None, help="Per-color share of occupied cells (0-1)")
     ap.add_argument("--max-total-regions", type=int, default=None)
     ap.add_argument("--max-fragmentation", type=float, default=None, help="Regions per occupied cell")
     ap.add_argument("--min-occupied-cells", type=int, default=None)
@@ -401,8 +270,6 @@ def _cmd_validate(argv: list[str]) -> int:
     res = validate_grid_regions(
         grid,
         min_largest_region=ns.min_largest_region,
-        max_largest_region=ns.max_largest_region,
-        max_color_share=ns.max_color_share,
         max_total_regions=ns.max_total_regions,
         max_fragmentation=ns.max_fragmentation,
         min_occupied_cells=ns.min_occupied_cells,
@@ -436,62 +303,17 @@ def _cmd_validate(argv: list[str]) -> int:
     return 3
 
 
-def _cmd_solve(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="psld solve")
-    ap.add_argument("level_json", type=str, help="Path to a level .json")
-    ap.add_argument("--max-expanded", type=int, default=50_000)
-    ap.add_argument("--max-steps", type=int, default=80)
-    ap.add_argument("--no-wait", action="store_true", help="Disallow the 'wait' action; only taps")
-    ap.add_argument("--entrance-pos", type=int, default=0, help="Conveyor entrance perimeter index (default 0)")
-    ns = ap.parse_args(argv)
-
-    d = json.load(open(ns.level_json, "r", encoding="utf-8"))
-    w = int(d["w"])
-    h = int(d["h"])
-    top = d["top"]
-    slots = d["slots"]
-
-    cfg = GameConfig(entrance_pos=int(ns.entrance_pos))
-    res = solve_level(
-        top=top,
-        slots=slots,
-        w=w,
-        h=h,
-        cfg=cfg,
-        max_expanded=ns.max_expanded,
-        max_steps=ns.max_steps,
-        allow_wait=not ns.no_wait,
-    )
-
-    out: dict[str, object] = {
-        "solvable": res.solvable,
-        "steps": res.steps,
-        "expanded": res.expanded,
-        "reason": res.reason,
-    }
-    if res.solution is not None:
-        out["solution"] = [{"type": t, "x": x, "y": y} for (t, x, y) in res.solution]
-
-    sys.stdout.write(json.dumps(out, indent=2, sort_keys=True) + "\n")
-    return 0 if res.solvable else 4
-
-
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
-        print(
-            "psld commands: from-text, from-word, from-image, from-prompt, preview, "
-            "export-png, export-composite-png, validate, solve"
-        )
+        print("psld commands: from-text, from-word, from-image, from-prompt, preview, export-png, validate")
         print("Example: psld from-text CAT --w 16 --h 16 --colors 4 --out level.json")
         print("Example: psld from-word CAT --w 16 --h 16 --colors 4 --out cat.json")
         print("Example: psld from-prompt 'cat icon' --w 24 --h 24 --colors 5 --out cat.json")
         print("Example: psld from-prompt 'cat icon' --provider openai --w 32 --h 32 --colors 5 --out cat.json")
         print("Example: psld from-image path/to/icon.png --w 32 --h 32 --colors 5 --out level.json  (also writes level.png)")
         print("Example: psld export-png level.json --out level.png")
-        print("Example: psld export-composite-png level.json --out composite.png")
         print("Example: psld validate level.json --min-largest-region 6 --max-fragmentation 0.08")
-        print("Example: psld solve level.json --max-expanded 20000 --max-steps 60")
         return 0
 
     cmd = argv[0]
@@ -508,12 +330,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_preview(sub_argv)
     if cmd == "export-png":
         return _cmd_export_png(sub_argv)
-    if cmd == "export-composite-png":
-        return _cmd_export_composite_png(sub_argv)
     if cmd == "validate":
         return _cmd_validate(sub_argv)
-    if cmd == "solve":
-        return _cmd_solve(sub_argv)
 
     print(f"Unknown command: {cmd}", file=sys.stderr)
     return 2

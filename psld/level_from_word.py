@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from .backward_slots import generate_backward_place_order, verify_forward_remove_order
 from .coloring import colorize_mask, colorize_mask_filled
-from .models import Level
+from .models import Level, Grid
+from .slots_from_top import derive_slots_from_top
 from .word_mask import render_word_template_mask
 
 
@@ -30,7 +31,8 @@ def level_from_word(
     else:
         palette, top = colorize_mask(mask, palette_size=palette_size, mode=color_mode)
         slots_mask = mask
-    slots = top
+    slots_derived = derive_slots_from_top(top.cells, mode="derangement", rotate_shift=None)
+    slots = Grid(w=top.w, h=top.h, cells=slots_derived.cells)
 
     backward = generate_backward_place_order(slots_mask)
     forward = list(reversed(backward))
@@ -51,5 +53,9 @@ def level_from_word(
             "padding": padding,
             "fill_background": fill_background,
             "background_index": background_index if fill_background else None,
+            "slots_mode": slots_derived.mode,
+            "slots_rotate_shift": slots_derived.shift,
+            "slots_same_cell_count": slots_derived.same_cell_count,
+            "slots_occupied_cells": slots_derived.occupied_cells,
         },
     )
